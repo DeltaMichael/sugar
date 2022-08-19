@@ -115,10 +115,16 @@ impl AWSMethod {
             }
         }
         if asset_info.content_type == "image/png" {
-            let link = format!("https://nft.cryowar.com/images/{}", &asset_info.name);
+            let link = format!(
+                "https://nft.cryowar.com/images/{}/{}",
+                directory, &asset_info.name
+            );
             Ok((asset_info.asset_id, link))
         } else {
-            let link = format!("https://nft.cryowar.com/metadata/{}", &asset_info.name);
+            let link = format!(
+                "https://nft.cryowar.com/metadata/{}/{}",
+                directory, &asset_info.name
+            );
             Ok((asset_info.asset_id, link))
         }
     }
