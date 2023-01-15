@@ -84,7 +84,7 @@ impl AWSMethod {
     async fn send(
         bucket: Arc<Bucket>,
         directory: String,
-        domain: String,
+        _domain: String,
         asset_info: AssetInfo,
     ) -> Result<(String, String)> {
         let data = match asset_info.data_type {
@@ -139,7 +139,7 @@ impl AWSMethod {
                 "https://nft.cryowar.com/metadata/{}/{}",
                 directory, &asset_info.name
             );
-            Ok((asset_info.asset_id, link.to_string()))
+            Ok((asset_info.asset_id, link))
         }
     }
 }
