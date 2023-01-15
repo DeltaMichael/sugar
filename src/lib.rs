@@ -1,3 +1,4 @@
+pub mod airdrop;
 pub mod bundlr;
 pub mod cache;
 pub mod candy_machine;
@@ -9,6 +10,7 @@ pub mod constants;
 pub mod create_config;
 pub mod deploy;
 pub mod errors;
+pub mod freeze;
 pub mod hash;
 pub mod launch;
 pub mod mint;

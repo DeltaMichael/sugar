@@ -17,7 +17,8 @@ use crate::{
     candy_machine::CANDY_MACHINE_ID,
     config::{
         parse_string_as_date, AwsConfig, ConfigData, Creator, EndSettingType, EndSettings,
-        GatekeeperConfig, HiddenSettings, UploadMethod, WhitelistMintMode, WhitelistMintSettings,
+        GatekeeperConfig, HiddenSettings, PinataConfig, UploadMethod, WhitelistMintMode,
+        WhitelistMintSettings,
     },
     constants::*,
     setup::{setup_client, sugar_setup},
@@ -117,6 +118,20 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
         }
     };
 
+    let freeze_time_validator = |input: &String| -> Result<(), String> {
+        let value = match input.parse::<u8>() {
+            Ok(value) => value,
+            Err(_) => return Err(format!("Couldn't parse input of '{}' to a number.", input)),
+        };
+        if value > MAX_FREEZE_DAYS {
+            Err(String::from(
+                "Freeze time cannot be greater than {MAX_FREEZE_DAYS} days.",
+            ))
+        } else {
+            Ok(())
+        }
+    };
+
     println!(
         "{} {}Sugar interactive config maker",
         style("[1/2]").bold().dim(),
@@ -163,7 +178,7 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
     println!("\nCheck out our Candy Machine config docs to learn about the options:");
     println!(
         "  -> {}\n",
-        style("https://docs.metaplex.com/tools/sugar/configuration")
+        style("https://docs.metaplex.com/developer-tools/sugar/guides/configuration")
             .bold()
             .magenta()
             .underlined()
@@ -269,7 +284,12 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
     } else if null_or_none(&trimmed) {
         None
     } else {
-        let date = dateparser::parse_with(&date, &Local, NaiveTime::from_hms(0, 0, 0))?;
+        let date = dateparser::parse_with(
+            &date,
+            &Local,
+            NaiveTime::from_hms_opt(0, 0, 0)
+                .ok_or_else(|| anyhow!("Failed to parse go live date"))?,
+        )?;
         Some(date.to_rfc3339())
     };
 
@@ -333,6 +353,7 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
     const WL_INDEX: usize = 2;
     const END_SETTINGS_INDEX: usize = 3;
     const HIDDEN_SETTINGS_INDEX: usize = 4;
+    const FREEZE_SETTINGS_INDEX: usize = 5;
 
     let extra_functions_options = vec![
         "SPL Token Mint",
@@ -340,6 +361,7 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
         "Whitelist Mint",
         "End Settings",
         "Hidden Settings",
+        "Freeze Settings",
     ];
 
     let choices = MultiSelect::with_theme(&theme)
@@ -568,9 +590,24 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
         None
     };
 
-    // upload method
+    // Freeze Settings
+    config_data.freeze_time = if choices.contains(&FREEZE_SETTINGS_INDEX) {
+        let days = Input::with_theme(&theme)
+                 .with_prompt("How many days do you want to freeze the treasury funds and minted NFTs for? (Max: 31)")
+                 .validate_with(freeze_time_validator)
+                 .default(MAX_FREEZE_DAYS.to_string())
+                 .interact()
+                 .unwrap()
+                 .parse::<u8>().expect("Failed to parse number into u64 that should have already been validated.");
 
-    let upload_options = vec!["Bundlr", "AWS", "NFT Storage", "SHDW"];
+        // convert to i64 of seconds, for storing in config and to match candy machine value
+        Some(days as i64 * 86400)
+    } else {
+        None
+    };
+
+    // upload method
+    let upload_options = vec!["Bundlr", "AWS", "NFT Storage", "SHDW", "Pinata"];
     config_data.upload_method = match Select::with_theme(&theme)
         .with_prompt("What upload method do you want to use?")
         .items(&upload_options)
@@ -582,6 +619,7 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
         1 => UploadMethod::AWS,
         2 => UploadMethod::NftStorage,
         3 => UploadMethod::SHDW,
+        4 => UploadMethod::Pinata,
         _ => UploadMethod::Bundlr,
     };
 
@@ -599,11 +637,26 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
 
         let directory = Input::with_theme(&theme)
             .with_prompt("What is the directory to upload to? Leave blank to store files at the bucket root dir.")
-            .default(String::from(""))
+            .allow_empty(true)
             .interact()
             .unwrap();
 
-        config_data.aws_config = Some(AwsConfig::new(bucket, profile, directory));
+        let domain: String = Input::with_theme(&theme)
+            .with_prompt("Do you have a custom domain? Leave blank to use AWS default domain.")
+            .allow_empty(true)
+            .interact()
+            .unwrap();
+
+        config_data.aws_config = Some(AwsConfig::new(
+            bucket,
+            profile,
+            directory,
+            if domain.is_empty() {
+                None
+            } else {
+                Some(domain)
+            },
+        ));
     }
 
     if config_data.upload_method == UploadMethod::NftStorage {
@@ -625,14 +678,46 @@ pub fn process_create_config(args: CreateConfigArgs) -> Result<()> {
         );
     }
 
-    // retain authority
+    if config_data.upload_method == UploadMethod::Pinata {
+        let jwt: String = Input::with_theme(&theme)
+            .with_prompt("What is your Pinata JWT authentication?")
+            .interact()
+            .unwrap();
 
+        let api_gateway = Input::with_theme(&theme)
+            .with_prompt("What is the Pinata API gateway for upload?")
+            .default(String::from("https://api.pinata.cloud"))
+            .interact()
+            .unwrap();
+
+        let content_gateway = Input::with_theme(&theme)
+            .with_prompt("What is the Pinata gateway for content retrieval?")
+            .default(String::from("https://gateway.pinata.cloud"))
+            .interact()
+            .unwrap();
+
+        let parallel_limit = Input::with_theme(&theme)
+            .with_prompt("How many concurrent uploads are allowed?")
+            .validate_with(number_validator)
+            .interact()
+            .unwrap()
+            .parse::<u16>()
+            .expect("Failed to parse number into u64 that should have already been validated.");
+
+        config_data.pinata_config = Some(PinataConfig {
+            jwt,
+            api_gateway,
+            content_gateway,
+            parallel_limit: Some(parallel_limit),
+        });
+    }
+
+    // retain authority
     config_data.retain_authority = Confirm::with_theme(&theme)
         .with_prompt("Do you want to retain update authority on your NFTs? We HIGHLY recommend you choose yes.")
         .interact()?;
 
     // is mutable
-
     config_data.is_mutable = Confirm::with_theme(&theme)
         .with_prompt("Do you want your NFTs to remain mutable? We HIGHLY recommend you choose yes.")
         .interact()?;

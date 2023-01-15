@@ -92,10 +92,10 @@ pub fn process_verify(args: VerifyArgs) -> Result<()> {
         let mut errors = Vec::new();
 
         println!("Verifying {} config line(s): (Ctrl+C to abort)", num_items);
-        let pb = progress_bar_with_style(num_items as u64);
+        let pb = progress_bar_with_style(num_items);
         // sleeps for a about 1 second
         let step: u64 = if num_items > 0 {
-            1_000_000 / num_items as u64
+            1_000_000u64 / num_items
         } else {
             0
         };
@@ -214,6 +214,7 @@ pub fn process_verify(args: VerifyArgs) -> Result<()> {
     let cluster = match get_cluster(program.rpc())? {
         Cluster::Devnet => "devnet",
         Cluster::Mainnet => "mainnet",
+        Cluster::Localnet => "",
         Cluster::Unknown => "",
     };
 

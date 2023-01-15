@@ -3,6 +3,7 @@ use std::{
     collections::HashSet,
     ffi::OsStr,
     fmt::Write as _,
+    fs::OpenOptions,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -65,13 +66,52 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
     };
 
     for (index, pair) in &asset_pairs {
+        // checks if we have complete URIs in the metadata file;
+        // if true, no upload is necessary and we will use the
+        // existing URIs
+
+        let m: Metadata = {
+            let m = OpenOptions::new()
+                .read(true)
+                .open(&pair.metadata)
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to read metadata file '{}' with error: {}",
+                        &pair.metadata,
+                        e
+                    )
+                })?;
+            serde_json::from_reader(&m)?
+        };
+
+        // retrieve the existring image uri from the metadata
+        let existing_image = if is_complete_uri(&m.image) {
+            m.image.clone()
+        } else {
+            String::new()
+        };
+
+        // retrieve the existring animation uri from the metadata
+        let existing_animation = match m.animation_url {
+            Some(ref url) => {
+                if is_complete_uri(url) {
+                    url.clone()
+                } else {
+                    String::new()
+                }
+            }
+            None => String::new(),
+        };
+
         match cache.items.get_mut(&index.to_string()) {
             Some(item) => {
-                let image_changed =
-                    !item.image_hash.eq(&pair.image_hash) || item.image_link.is_empty();
+                let image_changed = (!item.image_hash.eq(&pair.image_hash)
+                    || item.image_link.is_empty())
+                    && existing_image.is_empty();
 
-                let animation_changed = !item.animation_hash.eq(&pair.animation_hash)
-                    || (item.animation_link.is_none() && pair.animation.is_some());
+                let animation_changed = (!item.animation_hash.eq(&pair.animation_hash)
+                    || (item.animation_link.is_none() && pair.animation.is_some()))
+                    && existing_animation.is_empty();
 
                 let metadata_changed =
                     !item.metadata_hash.eq(&pair.metadata_hash) || item.metadata_link.is_empty();
@@ -81,6 +121,9 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
                     item.image_hash = pair.image_hash.clone();
                     item.image_link = String::new();
                     indices.image.push(*index);
+                } else if !existing_image.is_empty() {
+                    item.image_hash = pair.image_hash.clone();
+                    item.image_link = existing_image;
                 }
 
                 if animation_changed {
@@ -88,6 +131,9 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
                     item.animation_hash = pair.animation_hash.clone();
                     item.animation_link = None;
                     indices.animation.push(*index);
+                } else if !existing_animation.is_empty() {
+                    item.animation_hash = pair.animation_hash.clone();
+                    item.animation_link = Some(existing_animation);
                 }
 
                 if metadata_changed || image_changed || animation_changed {
@@ -100,16 +146,28 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
                 }
             }
             None => {
-                cache
-                    .items
-                    .insert(index.to_string(), pair.clone().into_cache_item());
-                // we need to upload both image/metadata
-                indices.image.push(*index);
-                indices.metadata.push(*index);
+                let mut item = pair.clone().into_cache_item();
+
+                // check if we need to upload the image
+                if existing_image.is_empty() {
+                    indices.image.push(*index);
+                } else {
+                    item.image_hash = pair.image_hash.clone();
+                    item.image_link = existing_image;
+                }
+
                 // and we might need to upload the animation
                 if pair.animation.is_some() {
-                    indices.animation.push(*index);
+                    if existing_animation.is_empty() {
+                        indices.animation.push(*index);
+                    } else {
+                        item.animation_hash = pair.animation_hash.clone();
+                        item.animation_link = Some(existing_animation);
+                    }
                 }
+
+                indices.metadata.push(*index);
+                cache.items.insert(index.to_string(), item);
             }
         }
         // sanity check: verifies that both symbol and seller-fee-basis-points are the
@@ -185,15 +243,10 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
     let mut errors = Vec::new();
 
     if need_upload {
+        let total_steps = if indices.animation.is_empty() { 4 } else { 5 };
         println!(
             "\n{} {}Initializing upload",
-            style(if indices.animation.is_empty() {
-                "[2/4]"
-            } else {
-                "[2/5]"
-            })
-            .bold()
-            .dim(),
+            style(format!("[2/{}]", total_steps)).bold().dim(),
             COMPUTER_EMOJI
         );
 
@@ -221,13 +274,7 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
 
         println!(
             "\n{} {}Uploading image files {}",
-            style(if indices.animation.is_empty() {
-                "[3/4]"
-            } else {
-                "[3/5]"
-            })
-            .bold()
-            .dim(),
+            style(format!("[3/{}]", total_steps)).bold().dim(),
             UPLOAD_EMOJI,
             if indices.image.is_empty() {
                 "(skipping)"
@@ -266,14 +313,9 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
 
         if !indices.animation.is_empty() {
             println!(
-                "\n{} {}Uploading animation files {}",
+                "\n{} {}Uploading animation files",
                 style("[4/5]").bold().dim(),
-                UPLOAD_EMOJI,
-                if indices.animation.is_empty() {
-                    "(skipping)"
-                } else {
-                    ""
-                }
+                UPLOAD_EMOJI
             );
         }
 
@@ -294,7 +336,7 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
             // updates the list of metadata indices since the image upload
             // might fail - removes any index that the animation upload failed
             if !indices.metadata.is_empty() {
-                for index in indices.animation.clone() {
+                for index in indices.animation {
                     let item = cache.items.get(&index.to_string()).unwrap();
 
                     if item.animation_link.is_none() {
@@ -307,13 +349,9 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
 
         println!(
             "\n{} {}Uploading metadata files {}",
-            style(if indices.animation.is_empty() {
-                "[4/4]"
-            } else {
-                "[5/5]"
-            })
-            .bold()
-            .dim(),
+            style(format!("[{}/{}]", total_steps, total_steps))
+                .bold()
+                .dim(),
             UPLOAD_EMOJI,
             if indices.metadata.is_empty() {
                 "(skipping)"
@@ -340,21 +378,53 @@ pub async fn process_upload(args: UploadArgs) -> Result<()> {
         println!("\n....no files need uploading, skipping remaining steps.");
     }
 
-    // sanity check
+    // move all non-numeric keys to the beginning and sort as strings
+    // sort numeric keys as integers
+    cache
+        .items
+        .sort_by(|key_a, _, key_b, _| -> std::cmp::Ordering {
+            let a = key_a.parse::<i32>();
+            let b = key_b.parse::<i32>();
 
-    cache.items.sort_keys();
+            if a.is_err() && b.is_err() {
+                // string, string
+                key_a.cmp(key_b)
+            } else if a.is_ok() && b.is_err() {
+                // number, string
+                std::cmp::Ordering::Greater
+            } else if a.is_err() && b.is_ok() {
+                // string, number
+                std::cmp::Ordering::Less
+            } else {
+                // number, number
+                a.unwrap().cmp(&b.unwrap())
+            }
+        });
     cache.sync_file()?;
+
+    // sanity check
 
     let mut count = 0;
 
-    for (_index, item) in &cache.items.0 {
-        let has_animation = if let Some(animation_link) = &item.animation_link {
-            animation_link.is_empty()
+    for (index, item) in &cache.items.0 {
+        let asset_pair = asset_pairs.get(&isize::from_str(index)?).unwrap();
+
+        // we first check that the asset has an animation file; if there is one,
+        // we need to check that the cache item has the link and the link is not empty
+        let missing_animation_link = if asset_pair.animation.is_some() {
+            if let Some(link) = &item.animation_link {
+                link.is_empty()
+            } else {
+                true
+            }
         } else {
+            // the asset does not have animation file
             false
         };
 
-        if !(item.image_link.is_empty() || item.metadata_link.is_empty() || has_animation) {
+        // only increment the count if the cache item is complete (all links are present)
+        if !(item.image_link.is_empty() || item.metadata_link.is_empty() || missing_animation_link)
+        {
             count += 1;
         }
     }

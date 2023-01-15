@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anchor_client::solana_sdk::account::Account;
 use anchor_lang::AnchorDeserialize;
@@ -11,7 +14,7 @@ use mpl_token_metadata::{
 };
 use serde::Serialize;
 use solana_client::{client_error::ClientError, rpc_client::RpcClient};
-use solana_transaction_crawler::crawler::Crawler;
+// use solana_transaction_crawler::crawler::Crawler;
 use tokio::sync::Semaphore;
 
 use crate::{
@@ -20,6 +23,7 @@ use crate::{
     common::*,
     config::{get_config_data, Cluster},
     pdas::{find_candy_machine_creator_pda, find_metadata_pda},
+    setup::get_rpc_url,
     utils::*,
 };
 
@@ -97,29 +101,20 @@ pub async fn process_reveal(args: RevealArgs) -> Result<()> {
     let spinner = spinner_with_style();
     spinner.set_message("Loading...");
     let solana_cluster: Cluster = get_cluster(program.rpc())?;
+    let rpc_url = get_rpc_url(args.rpc_url);
 
-    #[allow(unused_assignments)]
-    let mut rpc_url = String::new();
+    let solana_cluster = if rpc_url.ends_with("8899") {
+        Cluster::Localnet
+    } else {
+        solana_cluster
+    };
 
     let metadata_pubkeys = match solana_cluster {
-        Cluster::Devnet => {
-            rpc_url = String::from("https://devnet.genesysgo.net/");
-            let client = RpcClient::new(&rpc_url);
+        Cluster::Devnet | Cluster::Localnet | Cluster::Mainnet => {
+            let client = RpcClient::new_with_timeout(&rpc_url, Duration::from_secs(300));
             let (creator, _) = find_candy_machine_creator_pda(&candy_machine_id);
             let creator = bs58::encode(creator).into_string();
-            get_cm_creator_accounts(&client, &creator, 0)?
-        }
-        Cluster::Mainnet => {
-            rpc_url = String::from("https://ssc-dao.genesysgo.net");
-            let client = RpcClient::new(&rpc_url);
-            let crawled_accounts = Crawler::get_cmv2_mints(client, candy_machine_id).await?;
-            match crawled_accounts.get("metadata") {
-                Some(accounts) => accounts
-                    .iter()
-                    .map(|account| Pubkey::from_str(account).unwrap())
-                    .collect::<Vec<Pubkey>>(),
-                None => Vec::new(),
-            }
+            get_cm_creator_metadata_accounts(&client, &creator, 0)?
         }
         _ => {
             return Err(anyhow!(

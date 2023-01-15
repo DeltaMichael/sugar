@@ -29,10 +29,10 @@ const MAX_RETRY: u64 = 120;
 const DELAY_UNTIL_RETRY: u64 = 1000;
 
 /// Size of Bundlr transaction header
-const HEADER_SIZE: u64 = 2000;
+const HEADER_SIZE: u64 = 2_000;
 
 /// Minimum file size for cost calculation
-const MINIMUM_SIZE: u64 = 10000;
+const MINIMUM_SIZE: u64 = 80_000;
 
 pub struct BundlrMethod {
     pub client: Arc<Bundlr<SolanaSigner>>,
@@ -50,7 +50,7 @@ impl BundlrMethod {
         let bundlr_node = match solana_cluster {
             Cluster::Devnet => BUNDLR_DEVNET,
             Cluster::Mainnet => BUNDLR_MAINNET,
-            Cluster::Unknown => {
+            Cluster::Unknown | Cluster::Localnet => {
                 return Err(anyhow!("Bundlr is only supported on devnet or mainnet"));
             }
         };

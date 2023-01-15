@@ -52,6 +52,8 @@ pub const CONFIG_URI_OFFSET: usize = STRING_LEN_SIZE + CONFIG_NAME_OFFSET + MAX_
 
 pub const MINT_LAYOUT: u64 = 82;
 
+pub const VALID_CATEGORIES: [&str; 5] = ["image", "video", "audio", "vr", "html"];
+
 pub const DEFAULT_UUID: &str = "000000";
 
 /// Maximum number of concurrent tasks (this is important for tasks that handle files
@@ -64,6 +66,10 @@ pub const DEFAULT_ASSETS: &str = "assets";
 /// Default path for cache file.
 pub const DEFAULT_CACHE: &str = "cache.json";
 
+/// Default path for airdrop list
+pub const DEFAULT_AIRDROP_LIST: &str = "airdrop_list.json";
+pub const DEFAULT_AIRDROP_LIST_HELP: &str = "Path to airdrop targets list, format: \n{\n\"address1\": number_of_tokens,\n\"address2\": number_of_tokens\n}\n";
+
 /// Default path for config file.
 pub const DEFAULT_CONFIG: &str = "config.json";
 
@@ -75,9 +81,6 @@ pub const BUNDLR_DEVNET: &str = "https://devnet.bundlr.network";
 
 /// Bundlr mainnet endpoint.
 pub const BUNDLR_MAINNET: &str = "https://node1.bundlr.network";
-
-/// Default RPC endpoint for devnet.
-pub const DEFAULT_RPC_DEVNET: &str = "https://devnet.genesysgo.net";
 
 pub const CIVIC_NETWORK: &str = "ignREusXmGrscGNUesoU9mxfds9AiYTezUKex2PsZV6";
 
@@ -112,3 +115,13 @@ pub const ERROR_EMOJI: Emoji<'_, '_> = Emoji("🛑 ", "");
 pub const WARNING_EMOJI: Emoji<'_, '_> = Emoji("⚠️ ", "");
 
 pub const SIGNING_EMOJI: Emoji<'_, '_> = Emoji("✍️ ", "");
+
+pub const ICE_CUBE_EMOJI: Emoji<'_, '_> = Emoji("🧊 ", "");
+
+pub const FIRE_EMOJI: Emoji<'_, '_> = Emoji("🔥 ", "");
+
+pub const RIGHT_ARROW_EMOJI: Emoji<'_, '_> = Emoji("➡️ ", "");
+
+pub const MONEY_BAG_EMOJI: Emoji<'_, '_> = Emoji("💰 ", "");
+
+pub const MAX_FREEZE_DAYS: u8 = 31;
