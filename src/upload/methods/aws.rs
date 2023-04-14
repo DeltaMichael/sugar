@@ -84,7 +84,7 @@ impl AWSMethod {
     async fn send(
         bucket: Arc<Bucket>,
         directory: String,
-        domain: String,
+        _domain: String,
         asset_info: AssetInfo,
     ) -> Result<(String, String)> {
         let data = match asset_info.data_type {
@@ -129,9 +129,21 @@ impl AWSMethod {
             }
         }
 
-        let link = url::Url::parse(&domain)?.join(path_str)?;
-
-        Ok((asset_info.asset_id, link.to_string()))
+        // let link = url::Url::parse(&domain)?.join(path_str)?;
+        if asset_info.content_type == "image/png" {
+            let link = format!(
+                "https://nft.cryowar.com/images/{}/{}",
+                directory, &asset_info.name
+            );
+            Ok((asset_info.asset_id, link))
+        } else {
+            let link = format!(
+                "https://nft.cryowar.com/metadata/{}/{}",
+                directory, &asset_info.name
+            );
+            Ok((asset_info.asset_id, link))
+        }
+        // Ok((asset_info.asset_id, link.to_string()))
     }
 }
 
